@@ -28,14 +28,8 @@ class ConsumerWorker:
                 source = evt.get('source')
                 payload = json.dumps(evt.get('payload', {}))
                 
-                # Event di queue sudah pasti unik (sudah di-cek di /publish)
-                # Langsung simpan ke database
-                now = datetime.utcnow().isoformat()
-                
-                await asyncio.to_thread(
-                    self.dedup.mark_processed, 
-                    topic, event_id, now
-                )
+                # Event di queue sudah pasti unik dan sudah ditandai di /publish
+                # Kita hanya perlu simpan detail event ke tabel events
                 await asyncio.to_thread(
                     self.dedup.insert_event_record, 
                     topic, event_id, ts, source, payload

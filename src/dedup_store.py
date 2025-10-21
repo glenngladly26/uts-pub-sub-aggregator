@@ -10,13 +10,15 @@ class DedupStore:
     def __init__(self, path: str):
         self.path = path
         os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        # Gunakan DEFERRED mode untuk transaction control
         self.conn = sqlite3.connect(
             self.path, 
             check_same_thread=False, 
-            isolation_level=None
+            isolation_level='DEFERRED'  # Changed from None
         )
         # Use WAL for better concurrency
         self.conn.execute('PRAGMA journal_mode=WAL;')
+        self.conn.commit()
         self.ensure_tables()
     
     def ensure_tables(self):
@@ -42,27 +44,36 @@ class DedupStore:
             # Index untuk performa
             c.execute('CREATE INDEX IF NOT EXISTS idx_events_topic ON events(topic)')
             c.execute('CREATE INDEX IF NOT EXISTS idx_processed_topic ON processed(topic)')
+        self.conn.commit()
     
-    def is_duplicate(self, topic: str, event_id: str) -> bool:
+    def mark_processed_if_new(self, topic: str, event_id: str, processed_at: str) -> bool:
         """
-        Cek apakah event sudah pernah diproses.
-        Return True jika BARU (belum ada), False jika DUPLIKAT (sudah ada).
+        Atomically check and mark event sebagai processed.
+        Return True jika berhasil ditandai (event BARU).
+        Return False jika sudah ada (event DUPLIKAT).
+        
+        Thread-safe dengan lock eksplisit.
         """
-        with closing(self.conn.cursor()) as c:
-            c.execute(
-                'SELECT COUNT(*) FROM processed WHERE topic=? AND event_id=?',
-                (topic, event_id)
-            )
-            count = c.fetchone()[0]
-            return count == 0  # True = baru, False = duplikat
-    
-    def mark_processed(self, topic: str, event_id: str, processed_at: str):
-        """Tandai event sebagai sudah diproses."""
-        with closing(self.conn.cursor()) as c:
-            c.execute(
-                'INSERT OR IGNORE INTO processed(topic, event_id, processed_at) VALUES (?, ?, ?)',
-                (topic, event_id, processed_at)
-            )
+        with self.lock:
+            with closing(self.conn.cursor()) as c:
+                # Cek apakah sudah ada
+                c.execute(
+                    'SELECT COUNT(*) FROM processed WHERE topic=? AND event_id=?',
+                    (topic, event_id)
+                )
+                exists = c.fetchone()[0] > 0
+                
+                if not exists:
+                    # Insert jika belum ada
+                    c.execute(
+                        'INSERT INTO processed(topic, event_id, processed_at) VALUES (?, ?, ?)',
+                        (topic, event_id, processed_at)
+                    )
+                    self.conn.commit()
+                    return True
+                else:
+                    # Sudah ada
+                    return False
     
     def insert_event_record(self, topic: str, event_id: str, timestamp: str, 
                            source: str, payload: str):
@@ -72,6 +83,7 @@ class DedupStore:
                 'INSERT OR IGNORE INTO events(topic, event_id, timestamp, source, payload) VALUES (?,?,?,?,?)',
                 (topic, event_id, timestamp, source, payload)
             )
+        self.conn.commit()
     
     def list_processed(self, topic: str = None):
         with closing(self.conn.cursor()) as c:

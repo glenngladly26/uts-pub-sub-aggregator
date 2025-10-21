@@ -70,13 +70,14 @@ def make_app(db_path: str = DEDUP_DB) -> FastAPI:
         for e in events:
             stats['received'] += 1
             
-            # Cek apakah event sudah pernah diproses (dedup check)
+            # ATOMIC: cek dan tandai sekaligus (untuk mencegah race condition)
+            now = iso_now()
             is_new = await asyncio.to_thread(
-                dedup.is_duplicate, e.topic, e.event_id
+                dedup.mark_processed_if_new, e.topic, e.event_id, now
             )
             
             if is_new:
-                # Event baru, masukkan ke queue untuk diproses consumer
+                # Event baru berhasil ditandai, masukkan ke queue untuk diproses consumer
                 await queue.put(e.model_dump())
                 accepted += 1
             else:
