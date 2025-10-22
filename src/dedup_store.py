@@ -99,6 +99,16 @@ class DedupStore:
                 'total_processed': total_processed,
                 'unique_topics': unique_topics
             }
+        
+    def insert_event(self, topic, event_id, timestamp, source, payload):
+        """Masukkan event baru ke tabel events."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO events (topic, event_id, timestamp, source, payload) VALUES (?, ?, ?, ?, ?)",
+            (topic, event_id, timestamp, source, payload),
+        )
+        self.conn.commit()
+        cur.close()
 
     def close(self):
         self.conn.close()
