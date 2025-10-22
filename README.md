@@ -3,6 +3,7 @@
 Sebuah sistem Pub-Sub Log Aggregator sederhana yang dirancang untuk menangani deduplikasi event, pemrosesan asinkron, serta penyimpanan event menggunakan FastAPI dan SQLite.
 Proyek ini mendemonstrasikan arsitektur idempotent consumer dalam sistem terdistribusi.
 
+---
 
 ## ⚙️ Instalasi dan Menjalankan Aplikasi
 ### 1️⃣ Clone Repository
@@ -31,6 +32,7 @@ uvicorn src.main:app --reload
 http://127.0.0.1:8000/docs
 ```
 
+---
 
 ## 🐳 Menjalankan Menggunakan Docker
 ### Build Image
@@ -48,6 +50,7 @@ docker run -d -p 8080:8080 uts-aggregator
 http://localhost:8080/docs
 ```
 
+---
 
 ## 🧪 Testing
 ### Unit Testing
@@ -62,6 +65,7 @@ Mengirimkan lebih dari 5000 event secara paralel untuk menguji performa deduplik
 python load_test.py
 ```
 
+---
 
 ## 🌐 Daftar Endpoint
 | Method   | Endpoint   | Deskripsi                                                                                             |
@@ -71,6 +75,7 @@ python load_test.py
 | **GET**  | `/stats`   | Menampilkan statistik runtime aplikasi (jumlah event diterima, diproses, duplikat, dan daftar topik). |
 | **POST** | `/_flush`  | Endpoint internal (untuk testing) untuk memproses semua event yang tersisa di queue secara sinkron.   |
 
+---
 
 ## 🧠 Asumsi Sistem
 1. Deduplikasi berbasis (topic, event_id)
