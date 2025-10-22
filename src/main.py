@@ -10,11 +10,16 @@ from .dedup_store import DedupStore
 from .consumer import ConsumerWorker
 from .util import iso_now
 
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("aggregator")
 
+# Default database path
 DEDUP_DB = os.getenv("DEDUP_DB", "./data/dedup.db")
+
+# Global queue for async processing
 queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,13 +31,14 @@ async def lifespan(app: FastAPI):
         "topics": set(),
         "start_time": iso_now(),
     }
+
     worker = ConsumerWorker(queue, dedup, stats)
     worker_task = asyncio.create_task(worker.start())
-    
+
     app.state.dedup = dedup
     app.state.stats = stats
     app.state.worker_task = worker_task
-    
+
     try:
         yield
     finally:
@@ -41,51 +47,49 @@ async def lifespan(app: FastAPI):
         await asyncio.sleep(0.1)
         dedup.close()
 
+
 def make_app(db_path: str = DEDUP_DB) -> FastAPI:
     app = FastAPI(title="UTS Pub-Sub Aggregator", lifespan=lifespan)
-    
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     @app.post("/publish")
     async def publish_single(evt: Event | PublishBatch, request: Request):
         body = await request.json()
         events = []
-        
+
+        # Tentukan apakah request single atau batch
         if isinstance(body, list):
             events = [Event(**e) for e in body]
         elif "topic" in body:
             events.append(Event(**body))
         else:
             events = PublishBatch(**body).__root__
-        
-        stats = app.state.stats
+
         dedup = app.state.dedup
+        stats = app.state.stats
         accepted = 0
-        
+
         for e in events:
-            stats['received'] += 1
-            
-            # Cek apakah event sudah pernah diproses (dedup check)
-            is_new = await asyncio.to_thread(
-                dedup.is_duplicate, e.topic, e.event_id
+            stats["received"] += 1
+
+            # Tambahkan ke tabel processed secara atomik
+            inserted = await asyncio.to_thread(
+                dedup.add_if_new, e.topic, e.event_id, str(e.timestamp)
             )
-            
-            if is_new:
-                # Event baru, masukkan ke queue untuk diproses consumer
+
+            if inserted:
                 await queue.put(e.model_dump())
                 accepted += 1
             else:
-                # Event duplikat, langsung update stats
-                stats['duplicate_dropped'] += 1
-                logger.info(f"Duplicate rejected: topic={e.topic} event_id={e.event_id}")
-        
+                stats["duplicate_dropped"] += 1
+
         return {"accepted": accepted}
-    
+
     @app.get("/events")
     async def get_events(topic: str = Query(None)):
         ded = app.state.dedup
@@ -100,7 +104,7 @@ def make_app(db_path: str = DEDUP_DB) -> FastAPI:
             }
             for r in rows
         ]
-    
+
     @app.get("/stats")
     async def get_stats():
         s = app.state.stats
@@ -111,7 +115,8 @@ def make_app(db_path: str = DEDUP_DB) -> FastAPI:
             "topics": list(s["topics"]),
             "uptime": s["start_time"],
         }
-    
+
     return app
+
 
 app = make_app()

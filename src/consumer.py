@@ -15,12 +15,14 @@ class ConsumerWorker:
     
     async def start(self):
         self._running = True
+        processed_count = 0
+
         while self._running:
             try:
                 evt = await self.queue.get()
             except asyncio.CancelledError:
                 break
-            
+
             try:
                 topic = evt['topic']
                 event_id = evt['event_id']
@@ -28,28 +30,27 @@ class ConsumerWorker:
                 source = evt.get('source')
                 payload = json.dumps(evt.get('payload', {}))
                 
-                # Event di queue sudah pasti unik (sudah di-cek di /publish)
-                # Langsung simpan ke database
-                now = datetime.utcnow().isoformat()
-                
-                await asyncio.to_thread(
-                    self.dedup.mark_processed, 
-                    topic, event_id, now
-                )
+                # Event di queue sudah pasti unik (sudah dicek di /publish)
                 await asyncio.to_thread(
                     self.dedup.insert_event_record, 
                     topic, event_id, ts, source, payload
                 )
-                
-                self.stats['unique_processed'] += 1
-                self.stats['topics'].add(topic)
-                
-                logger.debug(f"Processed: topic={topic} event_id={event_id}")
-                
+
+                # Update statistik di memori
+                self.stats["unique_processed"] += 1
+                self.stats["topics"].add(topic)
+                processed_count += 1
+
+                # Logging ringan tiap 100 event
+                if processed_count % 100 == 0:
+                    logger.info(f"Processed {processed_count} unique events so far...")
+
             except Exception as e:
-                logger.exception("Error processing event: %s", e)
+                logger.exception("⚠️ Error processing event: %s", e)
             finally:
                 self.queue.task_done()
-    
+
+        logger.info("ConsumerWorker stopped cleanly.")
+
     def stop(self):
         self._running = False
